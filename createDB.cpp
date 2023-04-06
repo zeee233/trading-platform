@@ -9,9 +9,11 @@ using namespace pqxx;
 #include <fstream>
 #include <string>
 #include <sstream>
+#include <pthread.h>
 #include <regex>
+#include <atomic>
 
-int trans_id = 0; // global variable
+std::atomic<int> trans_id(0); // global variable
 connection *connectDB()
 {
     // Allocate & initialize a Postgres connection object
@@ -281,7 +283,7 @@ void handleTransOrder(const pugi::xml_node &child_node, int account_id, connecti
     opened_node.append_attribute("id") = to_string(account_id).c_str();
 
     string side = (amount < 0) ? "sell" : "buy";
-    string sql_insert_order = "INSERT INTO orders (trans_id, account_id, symbol_name, amount, price, side, status) VALUES (" + to_string(trans_id++) + ", " + to_string(account_id) + ", '" + symbol_name + "', " + to_string(amount) + ", " + to_string(price) + ", '" + side + "', 'open') RETURNING id";
+    string sql_insert_order = "INSERT INTO orders (trans_id, account_id, symbol_name, amount, price, side, status) VALUES (" + to_string(trans_id.fetch_add(1)) + ", " + to_string(account_id) + ", '" + symbol_name + "', " + to_string(amount) + ", " + to_string(price) + ", '" + side + "', 'open') RETURNING id";
     result R_insert_order(w.exec(sql_insert_order));
     new_order_id = R_insert_order[0][0].as<int>();
     w.commit();
@@ -622,6 +624,55 @@ string parseXMLMessage(string msg, int msg_size, connection *C)
     string response_str = ss.str();
     return response_str;
 }
+class threadInfo
+{
+public:
+    int new_socket;
+};
+
+void *threadParseXML(void *arg)
+{
+    // threadInfo *thr_arg = (threadInfo *)arg;
+    int new_socket = *(int *)arg;
+    connection *C = connectDB();
+
+    char buffer[65536] = {0};
+    int bytes_received = recv(new_socket, buffer, sizeof(buffer), 0);
+    cout << "server receive: " << buffer << endl;
+    if (bytes_received < 0)
+    {
+        cerr << "Error: cannot receive message" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    // Convert the received buffer to a string
+    string msg(buffer, bytes_received);
+
+    // Parse the message size from the first line
+    int size_end = msg.find('\n');
+
+    if (size_end == string::npos)
+    {
+        cout << "error msg:" << msg << "...." << endl;
+        cerr << "Error: missing newline character" << endl;
+        exit(EXIT_FAILURE);
+    }
+    string size_str = msg.substr(0, size_end);
+    msg = msg.substr(size_end + 1);
+    int msg_size = stoi(size_str);
+
+    // Check that the message size is correct
+    if (msg.size() != msg_size)
+    {
+        cerr << "Error: message size does not match" << endl;
+        exit(EXIT_FAILURE);
+    }
+    string response = parseXMLMessage(msg, msg_size, C);
+    send(new_socket, response.c_str(), response.length(), 0);
+
+    close(new_socket);
+    return NULL;
+}
 
 int main()
 {
@@ -631,37 +682,15 @@ int main()
     while (true)
     {
         // int proxy_server_fd = create_server("12345");
-        char buffer[65536] = {0};
+
         int new_socket = accept_server(proxy_server_fd);
-        int bytes_received = recv(new_socket, buffer, sizeof(buffer), 0);
-        if (bytes_received < 0)
-        {
-            cerr << "Error: cannot receive message" << endl;
-            exit(EXIT_FAILURE);
-        }
-
-        // Convert the received buffer to a string
-        string msg(buffer, bytes_received);
-
-        // Parse the message size from the first line
-        int size_end = msg.find('\n');
-        if (size_end == string::npos)
-        {
-            cerr << "Error: missing newline character" << endl;
-            exit(EXIT_FAILURE);
-        }
-        string size_str = msg.substr(0, size_end);
-        msg = msg.substr(size_end + 1);
-        int msg_size = stoi(size_str);
-
-        // Check that the message size is correct
-        if (msg.size() != msg_size)
-        {
-            cerr << "Error: message size does not match" << endl;
-            exit(EXIT_FAILURE);
-        }
-        string response = parseXMLMessage(msg, msg_size, C);
-        send(new_socket, response.c_str(), response.length(), 0);
+        cout << "socket used: " << new_socket << endl;
+        pthread_t thread;
+        // threadInfo *infor = new threadInfo();
+        //  infor->c = C;
+        // infor->new_socket = new_socket;
+        pthread_create(&thread, NULL, threadParseXML, &new_socket);
+        pthread_detach(thread);
     }
     C->disconnect();
     return EXIT_SUCCESS;

@@ -1,6 +1,6 @@
 CC=g++
 CFLAGS=-O3
-EXTRAFLAGS=-lpqxx -lpq -lpugixml
+EXTRAFLAGS=-lpqxx -lpq -lpugixml -lpthread 
 all: test client
 
 test: createDB.cpp 
