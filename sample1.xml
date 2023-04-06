@@ -13,3 +13,8 @@
  <account id="123">5000</account> 
   </symbol>
 </create>
+
+
+<transactions id="123456">
+<order sym="SPY" amount="-10" limit="10" />
+</transactions>

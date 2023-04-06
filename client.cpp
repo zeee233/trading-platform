@@ -7,7 +7,7 @@
 int main()
 {
     // Load XML content from a file
-    std::ifstream xml_file("sample1.xml");
+    std::ifstream xml_file("sample2.xml");
     if (!xml_file.is_open())
     {
         std::cerr << "Unable to open XML file." << std::endl;

@@ -188,23 +188,7 @@ pugi::xml_document handleCreate(pugi::xml_node xml_root, connection *C)
     }
     return response;
 }
-bool is_alphanumeric(const pugi::xml_node &child_node, pugi::xml_node &res_root)
-{
-    string symbol_name = child_node.attribute("sym").as_string();
-    // Check if the symbol_name is alphanumeric
-    regex alnum_pattern("[[:alnum:]]+");
-    if (!regex_match(symbol_name, alnum_pattern))
-    {
-        pugi::xml_node error_node = res_root.append_child("error");
-        error_node.append_attribute("sym") = symbol_name.c_str();
-        error_node.append_child(pugi::node_pcdata).set_value("Symbol name must be alphanumeric.");
-        return false;
-    }
-    else
-    {
-        return true;
-    }
-}
+
 void errorTransOrder(pugi::xml_node &error_node, const string &symbol_name, int amount, double price)
 {
     error_node.append_attribute("sym") = symbol_name.c_str();
@@ -239,7 +223,6 @@ void handleTransOrder(const pugi::xml_node &child_node, int account_id, connecti
     }
 
     work w(*C);
-
     // Check if the account exists
     string sql_check_account = "SELECT balance FROM account WHERE id = " + to_string(account_id);
     result R_check_account(w.exec(sql_check_account));
@@ -300,32 +283,35 @@ void handleTransOrder(const pugi::xml_node &child_node, int account_id, connecti
     result R_insert_order(w.exec(sql_insert_order));
     new_order_id = R_insert_order[0][0].as<int>();
     w.commit();
+    cout << "bbbbbbbbbbbbbbbbbbbbbb" << endl;
 }
 void orderMatch(int new_order_id, connection *C)
 {
     // every SQL command execute is immediately committed to the database, and there's no need to call commit() explicitly
-    nontransaction w(*C);
-
+    work w(*C);
     // Get the new order details
     string sql_get_order = "SELECT * FROM orders WHERE id = " + to_string(new_order_id);
     const pqxx::result &R_new_order = w.exec(sql_get_order);
-
+    w.commit();
     string new_side = R_new_order[0]["side"].as<string>();
     int new_amount = R_new_order[0]["amount"].as<int>();
     double new_price = R_new_order[0]["price"].as<double>();
     string opposite_side = new_side == "buy" ? "sell" : "buy";
     string price_condition = new_side == "buy" ? "<=" : ">=";
 
+    string symbol_name = R_new_order[0]["symbol_name"].as<string>();
     // Continue matching while new_amount is not zero
     while (new_amount != 0)
     {
         // Find a matching order
+        work w1(*C);
         string sql_find_matching_order = "SELECT * FROM orders WHERE side = '" + opposite_side + "' AND status = 'open' AND id < " + to_string(new_order_id) + " AND price " + price_condition + " " + to_string(new_price) + " ORDER BY price " + (new_side == "buy" ? "ASC" : "DESC") + ", id ASC LIMIT 1";
-        const pqxx::result &R_matching_order = w.exec(sql_find_matching_order);
+        const pqxx::result &R_matching_order = w1.exec(sql_find_matching_order);
 
         // No matching order found, break the loop
         if (R_matching_order.empty())
         {
+            w1.commit();
             break;
         }
 
@@ -334,9 +320,13 @@ void orderMatch(int new_order_id, connection *C)
         double matching_price = R_matching_order[0]["price"].as<double>();
 
         // Calculate the executed amount and the remaining amounts for both orders
-        int executed_amount = min(new_amount, matching_amount);
-        int new_remaining_amount = new_amount - executed_amount;
-        int matching_remaining_amount = matching_amount - executed_amount;
+        int executed_amount = min(abs(new_amount), abs(matching_amount));
+        int new_remaining_amount = new_amount - (new_side == "buy" ? executed_amount : -executed_amount);
+        int matching_remaining_amount = matching_amount - (opposite_side == "buy" ? executed_amount : -executed_amount);
+
+        // Determine the buyer's and seller's account IDs
+        int buyer_account_id = new_side == "buy" ? R_new_order[0]["account_id"].as<int>() : R_matching_order[0]["account_id"].as<int>();
+        int seller_account_id = new_side == "buy" ? R_matching_order[0]["account_id"].as<int>() : R_new_order[0]["account_id"].as<int>();
 
         // Update the new order amount
         new_amount = new_remaining_amount;
@@ -344,39 +334,52 @@ void orderMatch(int new_order_id, connection *C)
         // Update the matching order
         if (matching_remaining_amount == 0)
         {
-            // If matching order is fully executed, update its status
-            string sql_update_matching_order = "UPDATE orders SET status = 'executed', time = now()WHERE id = " + to_string(matching_order_id);
-            w.exec(sql_update_matching_order);
-            w.commit();
+            // If matching order is fully executed, update its status and price
+            // work w1(*C);
+            string sql_update_matching_order = "UPDATE orders SET status = 'executed', price = " + to_string(matching_price) + ", time = now() WHERE id = " + to_string(matching_order_id);
+            w1.exec(sql_update_matching_order);
         }
         else
         {
             // If matching order is partially executed, update its amount and status, and create a new executed order
-            string sql_update_matching_order = "UPDATE orders SET amount = " + to_string(matching_remaining_amount) + " WHERE id = " + to_string(matching_order_id);
-            w.exec(sql_update_matching_order);
 
-            string sql_create_executed_order = "INSERT INTO orders (trans_id, account_id, symbol_name, amount, price, side, status) VALUES (" + to_string(R_matching_order[0]["trans_id"].as<int>()) + ", " + to_string(R_matching_order[0]["account_id"].as<int>()) + ", '" + R_matching_order[0]["symbol_name"].as<string>() + "', " + to_string(executed_amount) + ", " + to_string(matching_price) + ", '" + opposite_side + "', 'executed')";
-            w.exec(sql_create_executed_order);
-            w.commit();
+            string sql_update_matching_order = "UPDATE orders SET amount = " + to_string(matching_remaining_amount) + " WHERE id = " + to_string(matching_order_id);
+            w1.exec(sql_update_matching_order);
+
+            string sql_create_executed_order = "INSERT INTO orders (trans_id, account_id, symbol_name, amount, price, side, status) VALUES (" + to_string(R_matching_order[0]["trans_id"].as<int>()) + ", " + to_string(R_matching_order[0]["account_id"].as<int>()) + ", '" + R_matching_order[0]["symbol_name"].as<string>() + "', " + to_string(opposite_side == "buy" ? executed_amount : -executed_amount) + ", " + to_string(matching_price) + ", '" + opposite_side + "', 'executed')";
+            w1.exec(sql_create_executed_order);
         }
 
         if (new_remaining_amount == 0)
         {
             // If the new order is fully executed, update its status
-            string sql_update_new_order = "UPDATE orders SET status = 'executed', time = now() WHERE id = " + to_string(new_order_id);
-            w.exec(sql_update_new_order);
-            w.commit();
-            break;
+            string sql_update_new_order = "UPDATE orders SET status = 'executed', price = " + to_string(matching_price) + ",time = now() WHERE id = " + to_string(new_order_id);
+            w1.exec(sql_update_new_order);
         }
         else
         {
+
             string sql_update_new_order = "UPDATE orders SET amount = " + to_string(new_remaining_amount) + ",time = now() WHERE id = " + to_string(new_order_id);
-            w.exec(sql_update_new_order);
+            w1.exec(sql_update_new_order);
             // If the new order is partially executed, create a new executed order with the executed amount and matching price
-            string sql_create_executed_order = "INSERT INTO orders (trans_id, account_id, symbol_name, amount, price, side, status) VALUES (" + to_string(R_new_order[0]["trans_id"].as<int>()) + ", " + to_string(R_new_order[0]["account_id"].as<int>()) + ", '" + R_new_order[0]["symbol_name"].as<string>() + "', " + to_string(executed_amount) + ", " + to_string(matching_price) + ", '" + new_side + "', 'executed')";
-            w.exec(sql_create_executed_order);
-            w.commit();
+            string sql_create_executed_order = "INSERT INTO orders (trans_id, account_id, symbol_name, amount, price, side, status) VALUES (" + to_string(R_new_order[0]["trans_id"].as<int>()) + ", " + to_string(R_new_order[0]["account_id"].as<int>()) + ", '" + R_new_order[0]["symbol_name"].as<string>() + "', " + to_string(new_side == "buy" ? executed_amount : -executed_amount) + ", " + to_string(matching_price) + ", '" + new_side + "', 'executed')";
+            w1.exec(sql_create_executed_order);
         }
+        // Update the buyer's account in the account_stock table
+
+        string sql_update_buyer_stock = "INSERT INTO account_stock (account_id, symbol_name, shares) VALUES (" + to_string(buyer_account_id) + ", '" + symbol_name + "', " + to_string(executed_amount) + ") ON CONFLICT (account_id, symbol_name) DO UPDATE SET shares = account_stock.shares + EXCLUDED.shares";
+        w1.exec(sql_update_buyer_stock);
+
+        // Update the seller's balance in the account table
+        if (new_side == "buy")
+        {
+            string diff_buyer = "UPDATE account SET balance = balance + " + to_string(executed_amount * (new_price - matching_price)) + " WHERE id = " + to_string(buyer_account_id);
+            w1.exec(diff_buyer);
+        }
+
+        string sql_update_seller_balance = "UPDATE account SET balance = balance + " + to_string(executed_amount * matching_price) + " WHERE id = " + to_string(seller_account_id);
+        w1.exec(sql_update_seller_balance);
+        w1.commit();
     }
     /*
     if (new_amount > 0)
@@ -386,13 +389,13 @@ void orderMatch(int new_order_id, connection *C)
         w.commit();
     }
     */
-    w.commit();
+    // w.commit();
 }
 // child_node is the original data, res_root is the results
 void handleQueryOrder(pugi::xml_node child_node, pqxx::connection *C, pugi::xml_node &res_root)
 {
     int order_id = child_node.attribute("id").as_int();
-    pqxx::nontransaction w(*C);
+    work w(*C);
 
     // Get the trans_id from the order with the given id
     std::string sql_get_trans_id = "SELECT trans_id FROM orders WHERE id = " + std::to_string(order_id);
@@ -429,7 +432,7 @@ void handleQueryOrder(pugi::xml_node child_node, pqxx::connection *C, pugi::xml_
 void handleCancelOrder(pugi::xml_node child_node, pqxx::connection *C, pugi::xml_node &res_root)
 {
     int order_id = child_node.attribute("id").as_int();
-    pqxx::nontransaction w(*C);
+    work w(*C);
     std::string sql_get_trans_id = "SELECT trans_id FROM orders WHERE id = " + std::to_string(order_id);
     pqxx::result R_trans_id = w.exec(sql_get_trans_id);
     if (!R_trans_id.empty())
@@ -452,10 +455,11 @@ void handleCancelOrder(pugi::xml_node child_node, pqxx::connection *C, pugi::xml
 
             if (status == "open")
             {
+                work w1(*C);
                 // Update the status to "close" and set the time to now
                 std::string sql_update_order = "UPDATE orders SET status = 'close', time = now() WHERE id = " + std::to_string(current_order_id);
-                w.exec(sql_update_order);
-
+                w1.exec(sql_update_order);
+                w1.commit();
                 // Append the canceled shares and time to the response
                 pugi::xml_node canceled_shares_node = canceled_node.append_child("canceled");
                 canceled_shares_node.append_attribute("shares") = shares;
@@ -471,7 +475,7 @@ void handleCancelOrder(pugi::xml_node child_node, pqxx::connection *C, pugi::xml
             }
         }
 
-        w.commit();
+        // w.commit();
     }
 }
 // xml_root is the original data
@@ -484,8 +488,10 @@ pugi::xml_document handleTrans(pugi::xml_node xml_root, connection *C)
 
     // Check if the account exists
     work w(*C);
+    cout << "kkkkkkkkkkkkkkkkkkk" << endl;
     string sql_check = "SELECT COUNT(*) FROM account WHERE id = " + to_string(account_id);
     result R_check(w.exec(sql_check));
+    w.commit();
     int count = R_check[0][0].as<int>();
 
     for (pugi::xml_node child_node : xml_root.children())
@@ -557,6 +563,7 @@ pugi::xml_document handleTrans(pugi::xml_node xml_root, connection *C)
             // ...
         }
     }
+    cout << "aqqqqqqqqqqqqqqqqqq" << endl;
     return res_doc;
 }
 
@@ -625,6 +632,7 @@ int main()
             cerr << "Error: message size does not match" << endl;
             exit(EXIT_FAILURE);
         }
+        cout << "111111111111111" << endl;
         string response = parseXMLMessage(msg, msg_size, C);
         send(new_socket, response.c_str(), response.length(), 0);
     }
