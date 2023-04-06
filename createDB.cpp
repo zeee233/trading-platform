@@ -557,6 +557,7 @@ pugi::xml_document handleTrans(pugi::xml_node xml_root, connection *C)
             // ...
         }
     }
+    return res_doc;
 }
 
 string parseXMLMessage(string msg, int msg_size, connection *C)
