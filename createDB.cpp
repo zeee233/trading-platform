@@ -1,6 +1,8 @@
 #include <iostream>
 #include <pqxx/pqxx>
 #include "pugixml.hpp"
+#include <ctime>
+#include <iomanip>
 #include "socket.h"
 using namespace std;
 using namespace pqxx;
@@ -283,7 +285,6 @@ void handleTransOrder(const pugi::xml_node &child_node, int account_id, connecti
     result R_insert_order(w.exec(sql_insert_order));
     new_order_id = R_insert_order[0][0].as<int>();
     w.commit();
-    cout << "bbbbbbbbbbbbbbbbbbbbbb" << endl;
 }
 void orderMatch(int new_order_id, connection *C)
 {
@@ -424,7 +425,12 @@ void handleQueryOrder(pugi::xml_node child_node, pqxx::connection *C, pugi::xml_
             }
             if (status == "canceled" || status == "executed")
             {
-                order_node.append_attribute("time") = row["time"].as<std::string>().c_str();
+                std::string time = row["time"].as<std::string>();
+                std::tm tm = {};
+                std::istringstream ss(time);
+                ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+                std::time_t timestamp = std::mktime(&tm);
+                order_node.append_attribute("time") = timestamp;
             }
         }
     }
@@ -452,18 +458,38 @@ void handleCancelOrder(pugi::xml_node child_node, pqxx::connection *C, pugi::xml
             int shares = row["amount"].as<int>();
             double price = row["price"].as<double>();
             std::string time = row["time"].as<std::string>();
+            string symbol_name = row["symbol_name"].as<string>();
 
+            int account_id = row["account_id"].as<int>();
             if (status == "open")
             {
-                work w1(*C);
-                // Update the status to "close" and set the time to now
-                std::string sql_update_order = "UPDATE orders SET status = 'close', time = now() WHERE id = " + std::to_string(current_order_id);
-                w1.exec(sql_update_order);
-                w1.commit();
-                // Append the canceled shares and time to the response
+                // work w1(*C);
+                //  Update the status to "canceled" and set the time to now
+                std::string sql_update_order = "UPDATE orders SET status = 'canceled', time = now() WHERE id = " + std::to_string(current_order_id);
+                w.exec(sql_update_order);
+                // w1.commit();
+                //  Append the canceled shares and time to the response
                 pugi::xml_node canceled_shares_node = canceled_node.append_child("canceled");
                 canceled_shares_node.append_attribute("shares") = shares;
-                canceled_shares_node.append_attribute("time") = time.c_str();
+                std::tm tm = {};
+                std::istringstream ss(time);
+                ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+                std::time_t timestamp = std::mktime(&tm);
+
+                canceled_shares_node.append_attribute("time") = timestamp;
+                // If it's a buy order, return the amount * price to the account's balance
+                if (shares > 0)
+                {
+                    double order_cost = shares * price;
+                    std::string sql_update_balance = "UPDATE account SET balance = balance + " + std::to_string(order_cost) + " WHERE id = " + std::to_string(account_id);
+                    w.exec(sql_update_balance);
+                }
+                // If it's a sell order, return the shares to the account's stock holdings
+                else if (shares < 0)
+                {
+                    std::string sql_update_shares = "INSERT INTO account_stock (account_id, symbol_name, shares) VALUES (" + std::to_string(account_id) + ", '" + symbol_name + "', " + std::to_string(shares) + ") ON CONFLICT (account_id, symbol_name) DO UPDATE SET shares = account_stock.shares - EXCLUDED.shares";
+                    w.exec(sql_update_shares);
+                }
             }
             else if (status == "executed")
             {
@@ -471,11 +497,15 @@ void handleCancelOrder(pugi::xml_node child_node, pqxx::connection *C, pugi::xml
                 pugi::xml_node executed_shares_node = canceled_node.append_child("executed");
                 executed_shares_node.append_attribute("shares") = shares;
                 executed_shares_node.append_attribute("price") = price;
-                executed_shares_node.append_attribute("time") = time.c_str();
+                std::tm tm = {};
+                std::istringstream ss(time);
+                ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+                std::time_t timestamp = std::mktime(&tm);
+                executed_shares_node.append_attribute("time") = timestamp;
             }
         }
 
-        // w.commit();
+        w.commit();
     }
 }
 // xml_root is the original data
@@ -488,7 +518,6 @@ pugi::xml_document handleTrans(pugi::xml_node xml_root, connection *C)
 
     // Check if the account exists
     work w(*C);
-    cout << "kkkkkkkkkkkkkkkkkkk" << endl;
     string sql_check = "SELECT COUNT(*) FROM account WHERE id = " + to_string(account_id);
     result R_check(w.exec(sql_check));
     w.commit();
@@ -563,7 +592,6 @@ pugi::xml_document handleTrans(pugi::xml_node xml_root, connection *C)
             // ...
         }
     }
-    cout << "aqqqqqqqqqqqqqqqqqq" << endl;
     return res_doc;
 }
 
@@ -632,7 +660,6 @@ int main()
             cerr << "Error: message size does not match" << endl;
             exit(EXIT_FAILURE);
         }
-        cout << "111111111111111" << endl;
         string response = parseXMLMessage(msg, msg_size, C);
         send(new_socket, response.c_str(), response.length(), 0);
     }

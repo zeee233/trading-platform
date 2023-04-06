@@ -18,3 +18,11 @@
 <transactions id="123456">
 <order sym="SPY" amount="-10" limit="10" />
 </transactions>
+
+<transactions id="123">
+<query id="TRANS_ID" /> 
+</transactions>
+
+<transactions id="123456">
+<cancel id="1" /> 
+</transactions>
