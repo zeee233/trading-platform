@@ -4,6 +4,15 @@
 #include <string>
 #include <iostream>
 #include <pthread.h>
+#include <ctime>
+#include <chrono>
+using namespace std::chrono;
+class thread_info
+{
+public:
+    int account_id;
+    string hostname;
+};
 void sendString(int client_socket, string msg)
 {
     std::string content_to_send = std::to_string(msg.length()) + "\n" + msg;
@@ -35,10 +44,12 @@ void recvString(int client_socket)
 }
 void *keepFlooding(void *accountID_ptr)
 {
-    int account_id = *((int *)accountID_ptr);
+    thread_info *inf = (thread_info *)accountID_ptr;
+    int account_id = inf->account_id;
+    string hostname = inf->hostname;
     try
     {
-        int client_socket = create_client("vcm-31143.vm.duke.edu", "12345");
+        int client_socket = create_client(hostname.c_str(), "12345"); //"vcm-31143.vm.duke.edu"
         // Client client("127.0.0.1", PORT);
         cout
             << "Successfully connected" << endl;
@@ -72,13 +83,10 @@ void *keepFlooding(void *accountID_ptr)
     }
     return NULL;
 }
-class thread_info
-{
-public:
-    int account_id;
-};
+
 int main(int argc, char *argv[])
 {
+    high_resolution_clock::time_point t1 = high_resolution_clock::now();
     // Load XML content from a file
     /*
     std::ifstream xml_file("sample2.xml");
@@ -131,13 +139,21 @@ int main(int argc, char *argv[])
     // Close the socket
     close(client_socket);
     */
+    if (argc != 3)
+    {
+        cerr << "two inputs: hostname, num_threads" << endl;
+        cerr << "test hostname is: vcm-31143.vm.duke.edu " << endl;
+        exit(EXIT_FAILURE);
+    }
     pthread_t *threads;
-    int numThreads = atoi(argv[1]);
+    int numThreads = atoi(argv[2]);
+    string hostn = argv[1];
     threads = (pthread_t *)malloc(numThreads * sizeof(pthread_t));
     for (int i = 0; i < numThreads; i++)
     {
         thread_info *inf = new thread_info();
         inf->account_id = i;
+        inf->hostname = hostn;
         pthread_create(&threads[i], NULL, keepFlooding, inf);
     }
     for (int i = 0; i < numThreads; i++)
@@ -145,5 +161,8 @@ int main(int argc, char *argv[])
         cout << i << " completed" << endl;
         pthread_join(threads[i], NULL);
     }
+    high_resolution_clock::time_point t2 = high_resolution_clock::now();
+    duration<double> time_span = duration_cast<duration<double>>(t2 - t1);
+    cout << "The whole process took " << time_span.count() << "seconds." << endl;
     return 0;
 }

@@ -671,6 +671,7 @@ void *threadParseXML(void *arg)
     send(new_socket, response.c_str(), response.length(), 0);
 
     close(new_socket);
+    delete (int *)arg;
     return NULL;
 }
 
@@ -679,6 +680,7 @@ int main()
     connection *C = connectDB();
     int proxy_server_fd = create_server("12345");
     createTables(C);
+    C->disconnect();
     while (true)
     {
         // int proxy_server_fd = create_server("12345");
@@ -689,9 +691,11 @@ int main()
         // threadInfo *infor = new threadInfo();
         //  infor->c = C;
         // infor->new_socket = new_socket;
-        pthread_create(&thread, NULL, threadParseXML, &new_socket);
+        int *socket_ptr = new int(new_socket);
+        pthread_create(&thread, NULL, threadParseXML, socket_ptr);
         pthread_detach(thread);
+        // close(new_socket);
     }
-    C->disconnect();
+
     return EXIT_SUCCESS;
 }
