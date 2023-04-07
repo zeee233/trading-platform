@@ -1,0 +1,9 @@
+Problems and how we solved:
+1. At first we just uesd the socket that was created from connection. But there would be some problems: The main thread might reuse this variable before creating a new thread, which could cause other threads to access an invalid or incorrect socket. To resolve this issue, you can allocate the socket to a dynamically allocated variable and pass the pointer to the thread. 
+
+2. We found that when we canceled the order, the buyer did not receive the refund. To resolve this, we remebered the original price and calculated the difference between them and updated the refund back to buyer.
+
+
+
+Problems:
+1. When there are too many clients that connecting to the postgreSQL database at the same time, the postgreSQL would crash and said too mant clients. In our local environment we can change postgreSQL's configuration to increase the max_connection. In our docker, we try to use POSTGRES_MAX_CONNECTIONS=2000 to increase it. This worked at first but then failed again. So now we cannot run clients too many at the same. 
