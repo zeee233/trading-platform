@@ -26,3 +26,7 @@
 <transactions id="123456">
 <cancel id="1" /> 
 </transactions>
+
+<transactions id="123456">
+<order sym="SPY" amount="400" limit="125" />
+</transactions>

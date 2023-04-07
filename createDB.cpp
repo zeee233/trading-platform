@@ -669,7 +669,8 @@ void *threadParseXML(void *arg)
     }
     string response = parseXMLMessage(msg, msg_size, C);
     send(new_socket, response.c_str(), response.length(), 0);
-
+    C->disconnect();
+    delete C;
     close(new_socket);
     delete (int *)arg;
     return NULL;
@@ -686,7 +687,7 @@ int main()
         // int proxy_server_fd = create_server("12345");
 
         int new_socket = accept_server(proxy_server_fd);
-        cout << "socket used: " << new_socket << endl;
+        // cout << "socket used: " << new_socket << endl;
         pthread_t thread;
         // threadInfo *infor = new threadInfo();
         //  infor->c = C;

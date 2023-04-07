@@ -8,5 +8,6 @@ test: createDB.cpp
 
 client: client.cpp
 	$(CC) $(CFLAGS) -o client client.cpp socket.h $(EXTRAFLAGS)
+
 clean:
 	rm -f *~ *.o test client

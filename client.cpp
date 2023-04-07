@@ -23,7 +23,7 @@ void sendString(int client_socket, string msg)
         close(client_socket);
         exit(EXIT_FAILURE);
     }
-    cout << "bytes send: " << bytes_sent << " msg is: " << content_to_send << endl;
+    // cout << "bytes send: " << bytes_sent << " msg is: " << content_to_send << endl;
     std::cout << "Content sent successfully." << std::endl;
 }
 void recvString(int client_socket)
