@@ -1,0 +1,22 @@
+version: '2'
+
+services:
+  db:
+    image: postgres
+    environment:
+      - POSTGRES_DB=TRADER
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=passw0rd
+      - POSTGRES_MAX_CONNECTIONS=2000
+    
+
+  server:
+    user: root
+    build: ./src
+    command: bash -c "cd /temp && chmod o+x run.sh && ./run.sh"
+    volumes:
+      - ./src:/temp
+    ports:
+      - "12345:12345"
+    depends_on:
+      - db

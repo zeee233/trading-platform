@@ -22,7 +22,7 @@ connection *connectDB()
     {
         // Establish a connection to the database
         // Parameters: database name, user name, user password
-        C = new connection("dbname=TRADER user=postgres password=passw0rd");
+        C = new connection("dbname=TRADER user=postgres password=passw0rd host=db port=5432");
         if (C->is_open())
         {
             cout << "Opened database successfully: " << C->dbname() << endl;
